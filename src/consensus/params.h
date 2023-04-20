@@ -65,6 +65,8 @@ struct Params {
     int nBudgetPaymentsWindowBlocks;
     int nSuperblockStartBlock;
     uint256 nSuperblockStartHash;
+    int nRewardHalvingInterval;
+    int nSuperblockPartMultiplier;
     int nSuperblockCycle; // in blocks
     int nSuperblockMaturityWindow; // in blocks
     int nGovernanceMinQuorum; // Min absolute vote count to trigger an action
@@ -109,10 +111,14 @@ struct Params {
     int64_t nPowTargetTimespan;
     int nPowKGWHeight;
     int nPowDGWHeight;
+    int nMaxSubsidy;
+    int nMidSubsidy;
+    int nMinSubsidy;
+    int64_t nMaxMoneyOut;
     int64_t DifficultyAdjustmentInterval() const { return nPowTargetTimespan / nPowTargetSpacing; }
     uint256 nMinimumChainWork;
     uint256 defaultAssumeValid;
-
+    std::map<int, uint256> mapCheckpoints;
     /** these parameters are only used on devnet and can be configured from the outside */
     int nMinimumDifficultyBlocks{0};
     int nHighSubsidyBlocks{0};

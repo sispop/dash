@@ -1009,52 +1009,41 @@ NOTE:   unlike bitcoin we are using PREVIOUS block height here,
 */
 CAmount GetBlockSubsidy(int nPrevBits, int nPrevHeight, const Consensus::Params& consensusParams, bool fSuperblockPartOnly)
 {
-    double dDiff;
-    CAmount nSubsidyBase;
+    // Calculate the subsidy for the previous block
+    CAmount nPrevSubsidy = nPrevHeight > 0 ? GetBlockSubsidy(nPrevBits, nPrevHeight - 1, consensusParams, true) : 0;
 
-    if (nPrevHeight <= 4500 && Params().NetworkIDString() == CBaseChainParams::MAIN) {
-        /* a bug which caused diff to not be correctly calculated */
-        dDiff = (double)0x0000ffff / (double)(nPrevBits & 0x00ffffff);
+    // Determine the current block height and subsidy
+    int nHeight = nPrevHeight + 1;
+    CAmount nSubsidy = 0;
+
+    // Calculate the maximum subsidy based on the target block time and maximum supply
+    CAmount nMaxSubsidy = consensusParams.nMaxMoneyOut;
+
+    // Calculate the subsidy based on the logarithmic reward schedule
+    if (nHeight <= consensusParams.nRewardHalvingInterval) {
+        nSubsidy = nMaxSubsidy >> (nHeight / consensusParams.nSubsidyHalvingInterval);
     } else {
-        dDiff = ConvertBitsToDouble(nPrevBits);
+        // Calculate the block reward using the logarithmic reward schedule
+        int nHalvings = (log2(nHeight) - log2(consensusParams.nRewardHalvingInterval)) / log2(2);
+        nSubsidy = nMaxSubsidy >> nHalvings;
     }
 
-    if (nPrevHeight < 5465) {
-        // Early ages...
-        // 1111/((x+1)^2)
-        nSubsidyBase = (1111.0 / (pow((dDiff+1.0),2.0)));
-        if(nSubsidyBase > 500) nSubsidyBase = 500;
-        else if(nSubsidyBase < 1) nSubsidyBase = 1;
-    } else if (nPrevHeight < 17000 || (dDiff <= 75 && nPrevHeight < 24000)) {
-        // CPU mining era
-        // 11111/(((x+51)/6)^2)
-        nSubsidyBase = (11111.0 / (pow((dDiff+51.0)/6.0,2.0)));
-        if(nSubsidyBase > 500) nSubsidyBase = 500;
-        else if(nSubsidyBase < 25) nSubsidyBase = 25;
-    } else {
-        // GPU/ASIC mining era
-        // 2222222/(((x+2600)/9)^2)
-        nSubsidyBase = (2222222.0 / (pow((dDiff+2600.0)/9.0,2.0)));
-        if(nSubsidyBase > 25) nSubsidyBase = 25;
-        else if(nSubsidyBase < 5) nSubsidyBase = 5;
+    // Ensure the subsidy is not less than the minimum subsidy
+    if (nSubsidy < consensusParams.nMinSubsidy) {
+        nSubsidy = consensusParams.nMinSubsidy;
     }
 
-    CAmount nSubsidy = nSubsidyBase * COIN;
-
-    // yearly decline of production by ~7.1% per year, projected ~18M coins max by year 2050+.
-    for (int i = consensusParams.nSubsidyHalvingInterval; i <= nPrevHeight; i += consensusParams.nSubsidyHalvingInterval) {
-        nSubsidy -= nSubsidy/14;
+    // Ensure the subsidy is not greater than the maximum subsidy
+    if (nSubsidy > nMaxSubsidy) {
+        nSubsidy = nMaxSubsidy;
     }
 
-    // this is only active on devnets
-    if (nPrevHeight < consensusParams.nHighSubsidyBlocks) {
-        nSubsidy *= consensusParams.nHighSubsidyFactor;
+    // If fSuperblockPartOnly is set, return only the superblock part of the subsidy
+    if (fSuperblockPartOnly) {
+        nSubsidy = nSubsidy >> consensusParams.nSuperblockPartMultiplier;
     }
 
-    // Hard fork to reduce the block reward by 10 extra percent (allowing budget/superblocks)
-    CAmount nSuperblockPart = (nPrevHeight > consensusParams.nBudgetPaymentsStartBlock) ? nSubsidy/10 : 0;
-
-    return fSuperblockPartOnly ? nSuperblockPart : nSubsidy - nSuperblockPart;
+    return nSubsidy;
 }
 
 CAmount GetMasternodePayment(int nHeight, CAmount blockValue, int nReallocActivationHeight)
@@ -2957,7 +2946,14 @@ bool CChainState::ActivateBestChainStep(CValidationState& state, const CChainPar
 
     const CBlockIndex *pindexOldTip = m_chain.Tip();
     const CBlockIndex *pindexFork = m_chain.FindFork(pindexMostWork);
-
+     int nBlockHeight = pindexMostWork->nHeight;
+      const Consensus::Params consensusParams = chainparams.GetConsensus();
+	if (consensusParams.mapCheckpoints.count(pindexMostWork->nHeight)) {
+   	 uint256 hashRet;
+	 if (hashRet != consensusParams.mapCheckpoints.at(pindexMostWork->nHeight)) {
+        return false;
+ 	   }
+	}
     // Disconnect active blocks which are no longer in the best chain.
     bool fBlocksDisconnected = false;
     DisconnectedBlockTransactions disconnectpool;
@@ -3821,22 +3817,11 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
     assert(pindexPrev != nullptr);
     const int nHeight = pindexPrev->nHeight + 1;
 
-    // Check proof of work
+    // Check the proof of work
     const Consensus::Params& consensusParams = params.GetConsensus();
-    if(Params().NetworkIDString() == CBaseChainParams::MAIN && nHeight <= 68589){
-        // architecture issues with DGW v1 and v2)
-        unsigned int nBitsNext = GetNextWorkRequired(pindexPrev, &block, consensusParams);
-        double n1 = ConvertBitsToDouble(block.nBits);
-        double n2 = ConvertBitsToDouble(nBitsNext);
-
-        if (abs(n1-n2) > n1*0.5)
-            return state.Invalid(ValidationInvalidReason::BLOCK_INVALID_HEADER, error("%s : incorrect proof of work (DGW pre-fork) - %f %f %f at %d", __func__, abs(n1-n2), n1, n2, nHeight),
-                            REJECT_INVALID, "bad-diffbits");
-    } else {
-        if (block.nBits != GetNextWorkRequired(pindexPrev, &block, consensusParams))
+    if (block.nBits != GetNextWorkRequired(pindexPrev,  consensusParams)) {
             return state.Invalid(ValidationInvalidReason::BLOCK_INVALID_HEADER, false, REJECT_INVALID, "bad-diffbits", strprintf("incorrect proof of work at %d", nHeight));
-    }
-
+     }
     // Check against checkpoints
     if (fCheckpointsEnabled) {
         // Don't accept any forks from the main chain prior to last checkpoint.
@@ -3855,11 +3840,6 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
     if (block.GetBlockTime() > nAdjustedTime + MAX_FUTURE_BLOCK_TIME)
         return state.Invalid(ValidationInvalidReason::BLOCK_TIME_FUTURE, false, REJECT_INVALID, "time-too-new", strprintf("block timestamp too far in the future %d %d", block.GetBlockTime(), nAdjustedTime + 2 * 60 * 60));
 
-    // check for version 2, 3 and 4 upgrades
-    if((block.nVersion < 2 && nHeight >= consensusParams.BIP34Height) ||
-       (block.nVersion < 3 && nHeight >= consensusParams.BIP66Height) ||
-       (block.nVersion < 4 && nHeight >= consensusParams.BIP65Height))
-            return state.Invalid(ValidationInvalidReason::BLOCK_INVALID_HEADER, false, REJECT_OBSOLETE, strprintf("bad-version(0x%08x)", block.nVersion), strprintf("rejected nVersion=0x%08x block", block.nVersion));
 
     return true;
 }
