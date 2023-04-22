@@ -74,7 +74,7 @@
 // Application startup time (used for uptime calculation)
 const int64_t nStartupTime = GetTime();
 
-//Dash only features
+//Syspop only features
 bool fMasternodeMode = false;
 bool fDisableGovernance = false;
 const std::string gCoinJoinName = "CoinJoin";
@@ -88,7 +88,7 @@ const std::string gCoinJoinName = "CoinJoin";
 */
 int nWalletBackups = 10;
 
-const char * const BITCOIN_CONF_FILENAME = "dash.conf";
+const char * const BITCOIN_CONF_FILENAME = "syspop.conf";
 const char * const BITCOIN_SETTINGS_FILENAME = "settings.json";
 
 ArgsManager gArgs;
@@ -320,7 +320,7 @@ bool ArgsManager::ParseParameters(int argc, const char* const argv[], std::strin
 
     for (int i = 1; i < argc; i++) {
         std::string key(argv[i]);
-        if (key == "-") break; //dash-tx using stdin
+        if (key == "-") break; //syspop-tx using stdin
 
 #ifdef MAC_OSX
         // At the first time when a user gets the "App downloaded from the
@@ -704,13 +704,13 @@ void PrintExceptionContinue(const std::exception_ptr pex, const char* pszExcepti
 
 fs::path GetDefaultDataDir()
 {
-    // Windows < Vista: C:\Documents and Settings\Username\Application Data\DashCore
-    // Windows >= Vista: C:\Users\Username\AppData\Roaming\DashCore
-    // Mac: ~/Library/Application Support/DashCore
-    // Unix: ~/.dashcore
+    // Windows < Vista: C:\Documents and Settings\Username\Application Data\SyspopCore
+    // Windows >= Vista: C:\Users\Username\AppData\Roaming\SyspopCore
+    // Mac: ~/Library/Application Support/SyspopCore
+    // Unix: ~/.syspopcore
 #ifdef WIN32
     // Windows
-    return GetSpecialFolderPath(CSIDL_APPDATA) / "DashCore";
+    return GetSpecialFolderPath(CSIDL_APPDATA) / "SyspopCore";
 #else
     fs::path pathRet;
     char* pszHome = getenv("HOME");
@@ -720,10 +720,10 @@ fs::path GetDefaultDataDir()
         pathRet = fs::path(pszHome);
 #ifdef MAC_OSX
     // Mac
-    return pathRet / "Library/Application Support/DashCore";
+    return pathRet / "Library/Application Support/SyspopCore";
 #else
     // Unix
-    return pathRet / ".dashcore";
+    return pathRet / ".syspopcore";
 #endif
 #endif
 }
@@ -966,7 +966,7 @@ bool ArgsManager::ReadConfigFiles(std::string& error, bool ignore_invalid_keys)
             }
         }
     } else {
-        // Create an empty dash.conf if it does not exist
+        // Create an empty syspop.conf if it does not exist
         FILE* configFile = fopen(GetConfigFile(confPath).string().c_str(), "a");
         if (configFile != nullptr)
             fclose(configFile);
@@ -1326,6 +1326,11 @@ std::string CopyrightHolders(const std::string& strPrefix, unsigned int nStartYe
 //    std::string strCopyrightHolders = strPrefix + strprintf(" %u-%u ", nStartYear, nEndYear) + strprintf(_(COPYRIGHT_HOLDERS).translated, _(COPYRIGHT_HOLDERS_SUBSTITUTION));
     const auto copyright_devs = strprintf(_(COPYRIGHT_HOLDERS).translated, COPYRIGHT_HOLDERS_SUBSTITUTION);
     std::string strCopyrightHolders = strPrefix + strprintf(" %u-%u ", nStartYear, nEndYear) + copyright_devs;
+
+    // Check for untranslated substitution to make sure Syspop Core copyright is not removed by accident
+    if (copyright_devs.find("Syspop Core") == std::string::npos) {
+        strCopyrightHolders += "\n" + strPrefix + strprintf(" %u-%u ", 2023, nEndYear) + "The Syspop Core developers";
+    }
 
     // Check for untranslated substitution to make sure Dash Core copyright is not removed by accident
     if (copyright_devs.find("Dash Core") == std::string::npos) {

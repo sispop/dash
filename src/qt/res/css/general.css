@@ -1,5 +1,5 @@
 /**
-Copyright (c) 2020 The Dash Core developers
+Copyright (c) 2020 The Syspop Core developers
 Distributed under the MIT/X11 software license, see the accompanying
 file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -991,11 +991,11 @@ AboutDialog
 
 QDialog#AboutDialog QLabel#label,
 QDialog#AboutDialog QLabel#copyrightLabel,
-QDialog#AboutDialog QLabel#label_2 { /* About Dash Contents */
+QDialog#AboutDialog QLabel#label_2 { /* About Syspop Contents */
     margin-left: 10px;
 }
 
-QDialog#AboutDialog QLabel#label_2 { /* Margin for About Dash text */
+QDialog#AboutDialog QLabel#label_2 { /* Margin for About Syspop text */
     margin-right: 10px;
 }
 

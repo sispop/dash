@@ -1,5 +1,5 @@
 // Copyright (c) 2011-2015 The Bitcoin Core developers
-// Copyright (c) 2014-2022 The Dash Core developers
+// Copyright (c) 2014-2022 The Syspop Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -343,12 +343,12 @@ void BitcoinGUI::stopConnectingAnimation()
 void BitcoinGUI::createActions()
 {
     sendCoinsMenuAction = new QAction(tr("&Send"), this);
-    sendCoinsMenuAction->setStatusTip(tr("Send coins to a Dash address"));
+    sendCoinsMenuAction->setStatusTip(tr("Send coins to a Syspop address"));
     sendCoinsMenuAction->setToolTip(sendCoinsMenuAction->statusTip());
 
     QString strCoinJoinName = QString::fromStdString(gCoinJoinName);
     coinJoinCoinsMenuAction = new QAction(QString("&%1").arg(strCoinJoinName), this);
-    coinJoinCoinsMenuAction->setStatusTip(tr("Send %1 funds to a Dash address").arg(strCoinJoinName));
+    coinJoinCoinsMenuAction->setStatusTip(tr("Send %1 funds to a Syspop address").arg(strCoinJoinName));
     coinJoinCoinsMenuAction->setToolTip(coinJoinCoinsMenuAction->statusTip());
 
     receiveCoinsMenuAction = new QAction(tr("&Receive"), this);
@@ -394,9 +394,9 @@ void BitcoinGUI::createActions()
     unlockWalletAction->setToolTip(tr("Unlock wallet"));
     lockWalletAction = new QAction(tr("&Lock Wallet"), this);
     signMessageAction = new QAction(tr("Sign &message..."), this);
-    signMessageAction->setStatusTip(tr("Sign messages with your Dash addresses to prove you own them"));
+    signMessageAction->setStatusTip(tr("Sign messages with your Syspop addresses to prove you own them"));
     verifyMessageAction = new QAction(tr("&Verify message..."), this);
-    verifyMessageAction->setStatusTip(tr("Verify messages to ensure they were signed with specified Dash addresses"));
+    verifyMessageAction->setStatusTip(tr("Verify messages to ensure they were signed with specified Syspop addresses"));
 
     openInfoAction = new QAction(tr("&Information"), this);
     openInfoAction->setStatusTip(tr("Show diagnostic information"));
@@ -444,7 +444,7 @@ void BitcoinGUI::createActions()
 
     showHelpMessageAction = new QAction(tr("&Command-line options"), this);
     showHelpMessageAction->setMenuRole(QAction::NoRole);
-    showHelpMessageAction->setStatusTip(tr("Show the %1 help message to get a list with possible Dash command-line options").arg(PACKAGE_NAME));
+    showHelpMessageAction->setStatusTip(tr("Show the %1 help message to get a list with possible Syspop command-line options").arg(PACKAGE_NAME));
 
     showCoinJoinHelpAction = new QAction(tr("%1 &information").arg(strCoinJoinName), this);
     showCoinJoinHelpAction->setMenuRole(QAction::NoRole);
@@ -1231,7 +1231,7 @@ void BitcoinGUI::updateNetworkState()
     fNetworkActivePrev = fNetworkActive;
 
     if (fNetworkActive) {
-        labelConnectionsIcon->setToolTip(tr("%n active connection(s) to Dash network", "", count));
+        labelConnectionsIcon->setToolTip(tr("%n active connection(s) to Syspop network", "", count));
     } else {
         labelConnectionsIcon->setToolTip(tr("Network activity disabled"));
         icon = "connect_4";
