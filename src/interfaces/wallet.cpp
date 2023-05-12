@@ -68,6 +68,15 @@ WalletTx MakeWalletTx(interfaces::Chain::Lock& locked_chain, CWallet& wallet, co
     result.is_denominate = wtx.tx->vin.size() == wtx.tx->vout.size() && // Number of inputs is same as number of outputs
                            (result.credit - result.debit) == 0 && // Transaction pays no tx fee
                            fInputDenomFound && fOutputDenomFound; // At least 1 input and 1 output are denominated belonging to the provided wallet
+
+    if (result.is_coinbase) {
+        // Find out PoW type
+        CBlockIndex* pindex = LookupBlockIndex(wtx.hashBlock);
+        if (pindex) {
+            result.nPowType = pindex->nVersion & (CBlockHeader::RANDOMX_BLOCK);
+        }
+    }
+
     return result;
 }
 

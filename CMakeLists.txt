@@ -15,6 +15,7 @@ include_directories(
         src/qt/forms
         src/leveldb/include
         src/univalue/include
+        src/quagba/proofofstake
 )
 
 if(UNIX AND NOT APPLE)
@@ -86,6 +87,8 @@ file(GLOB SOURCE_FILES
         src/univalue/include/*.h
         src/univalue/lib/*.cpp
         src/univalue/lib/*.h
+        src/quagba/proofofstake/*.cpp
+        src/quagba/proofofstake/*.h
         src/wallet/*.cpp
         src/wallet/*.h
         src/wallet/test/*.cpp

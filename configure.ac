@@ -13,6 +13,23 @@ AC_CONFIG_HEADERS([src/config/dash-config.h])
 AC_CONFIG_AUX_DIR([build-aux])
 AC_CONFIG_MACRO_DIR([build-aux/m4])
 
+dnl Add config links for asm includes for RandomX
+AC_CONFIG_LINKS([src/crypto/randomx/asm/program_epilogue_linux.inc:src/crypto/randomx/asm/program_epilogue_linux.inc])
+AC_CONFIG_LINKS([src/crypto/randomx/asm/program_epilogue_store.inc:src/crypto/randomx/asm/program_epilogue_store.inc])
+AC_CONFIG_LINKS([src/crypto/randomx/asm/program_epilogue_win64.inc:src/crypto/randomx/asm/program_epilogue_win64.inc])
+AC_CONFIG_LINKS([src/crypto/randomx/asm/program_loop_load.inc:src/crypto/randomx/asm/program_loop_load.inc])
+AC_CONFIG_LINKS([src/crypto/randomx/asm/program_loop_store.inc:src/crypto/randomx/asm/program_loop_store.inc])
+AC_CONFIG_LINKS([src/crypto/randomx/asm/program_prologue_linux.inc:src/crypto/randomx/asm/program_prologue_linux.inc])
+AC_CONFIG_LINKS([src/crypto/randomx/asm/program_prologue_win64.inc:src/crypto/randomx/asm/program_prologue_win64.inc])
+AC_CONFIG_LINKS([src/crypto/randomx/asm/program_read_dataset.inc:src/crypto/randomx/asm/program_read_dataset.inc])
+AC_CONFIG_LINKS([src/crypto/randomx/asm/program_read_dataset_sshash_fin.inc:src/crypto/randomx/asm/program_read_dataset_sshash_fin.inc])
+AC_CONFIG_LINKS([src/crypto/randomx/asm/program_read_dataset_sshash_init.inc:src/crypto/randomx/asm/program_read_dataset_sshash_init.inc])
+AC_CONFIG_LINKS([src/crypto/randomx/asm/program_sshash_constants.inc:src/crypto/randomx/asm/program_sshash_constants.inc])
+AC_CONFIG_LINKS([src/crypto/randomx/asm/program_sshash_load.inc:src/crypto/randomx/asm/program_sshash_load.inc])
+AC_CONFIG_LINKS([src/crypto/randomx/asm/program_sshash_prefetch.inc:src/crypto/randomx/asm/program_sshash_prefetch.inc])
+AC_CONFIG_LINKS([src/crypto/randomx/asm/program_xmm_constants.inc:src/crypto/randomx/asm/program_xmm_constants.inc])
+AC_CONFIG_LINKS([src/crypto/randomx/asm/randomx_reciprocal.inc:src/crypto/randomx/asm/randomx_reciprocal.inc])
+
 BITCOIN_DAEMON_NAME=dashd
 BITCOIN_GUI_NAME=dash-qt
 BITCOIN_CLI_NAME=dash-cli
@@ -1804,6 +1821,8 @@ fi
 AM_CONDITIONAL([TARGET_DARWIN], [test x$TARGET_OS = xdarwin])
 AM_CONDITIONAL([BUILD_DARWIN], [test x$BUILD_OS = xdarwin])
 AM_CONDITIONAL([TARGET_WINDOWS], [test x$TARGET_OS = xwindows])
+AM_CONDITIONAL([TARGET_ARM64], [test x$ARM_64 = xyes])
+AM_CONDITIONAL([TARGET_X86_64], [test x$X86_64 = xyes])
 AM_CONDITIONAL([ENABLE_WALLET],[test x$enable_wallet = xyes])
 AM_CONDITIONAL([ENABLE_TESTS],[test x$BUILD_TEST = xyes])
 AM_CONDITIONAL([ENABLE_FUZZ],[test x$enable_fuzz = xyes])
@@ -1901,6 +1920,8 @@ AC_CONFIG_LINKS([contrib/filter-lcov.py:contrib/filter-lcov.py])
 AC_CONFIG_LINKS([test/functional/test_runner.py:test/functional/test_runner.py])
 AC_CONFIG_LINKS([test/util/bitcoin-util-test.py:test/util/bitcoin-util-test.py])
 AC_CONFIG_LINKS([test/util/rpcauth-test.py:test/util/rpcauth-test.py])
+
+AM_PROG_AS
 
 dnl boost's m4 checks do something really nasty: they export these vars. As a
 dnl result, they leak into secp256k1's configure and crazy things happen.

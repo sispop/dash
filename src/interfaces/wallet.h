@@ -372,6 +372,7 @@ struct WalletTx
     std::map<std::string, std::string> value_map;
     bool is_coinbase;
     bool is_denominate;
+    int32_t nPowType = 0;
 };
 
 //! Updated transaction status.

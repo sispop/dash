@@ -56,6 +56,8 @@ namespace BCLog {
         COINDB      = (1 << 18),
         QT          = (1 << 19),
         LEVELDB     = (1 << 20),
+        MINING      = (1 << 21),
+        BLOCKCREATION = (1 << 22),
 
         //Start Dash
         CHAINLOCKS  = ((uint64_t)1 << 32),

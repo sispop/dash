@@ -4,6 +4,12 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <chain.h>
+#include <crypto/randomx/randomx.h>
+
+#include <pow.h>
+
+
+//int global_randomx_flags;
 
 /**
  * CChain implementation
@@ -169,3 +175,46 @@ const CBlockIndex* LastCommonAncestor(const CBlockIndex* pa, const CBlockIndex* 
     assert(pa == pb);
     return pa;
 }
+
+uint256 CBlockIndex::GetRandomXPoWHash() const
+{
+    return GetRandomXBlockHash(GetBlockHeader().nHeight, GetBlockHeader().GetRandomXHeaderHash());
+}
+
+uint256 GetRandomXBlockHash(const int32_t& height, const uint256& hash_blob ) {
+
+    char hash[RANDOMX_HASH_SIZE];
+
+    // Get the keyblock for the height
+    auto temp_keyblock = GetKeyBlock(height);
+
+    {
+      //LOCK(cs_randomx_validator);
+    // The hash we are calculating is in the same realm as the current validation caches
+    // We don't need to spin up a new cache, as we can use the one already allocated
+    if (temp_keyblock == GetCurrentKeyBlock()) {
+        if (!IsRandomXLightInit()) {
+            InitRandomXLightCache(height);
+        }
+
+        randomx_calculate_hash(GetMyMachineValidating(), &hash_blob, sizeof uint256(), hash);
+        return RandomXHashToUint256(hash);
+    }
+    }
+
+    // Create a new temp cache, and machine
+    auto temp_cache = randomx_alloc_cache((randomx_flags)global_randomx_flags);
+    randomx_init_cache(temp_cache, &temp_keyblock, sizeof uint256());
+    auto tempMachine = randomx_create_vm((randomx_flags)global_randomx_flags, temp_cache, NULL);
+
+    // calculate the hash
+    randomx_calculate_hash(tempMachine, &hash_blob, sizeof uint256(), hash);
+
+    // Destroy the vm and cache
+    randomx_destroy_vm(tempMachine);
+    randomx_release_cache(temp_cache);
+
+    // Return the hash
+    return RandomXHashToUint256(hash);
+}
+

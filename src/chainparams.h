@@ -11,7 +11,7 @@
 #include <llmq/params.h>
 #include <primitives/block.h>
 #include <protocol.h>
-
+#include <chain.h>
 #include <memory>
 #include <vector>
 
@@ -73,6 +73,7 @@ public:
     /** If this chain is exclusively used for testing */
     bool IsTestChain() const { return m_is_test_chain; }
     uint64_t PruneAfterHeight() const { return nPruneAfterHeight; }
+    int MaxConsecutivePoWBlocks() const { return nMaxPoWBlocks; }
     /** Minimum free space (in GB) needed for data directory */
     uint64_t AssumedBlockchainSize() const { return m_assumed_blockchain_size; }
     /** Minimum free space (in GB) needed for data directory when pruned; Does not include prune target*/
@@ -110,6 +111,12 @@ public:
     bool BIP9CheckMasternodesUpgraded() const { return fBIP9CheckMasternodesUpgraded; }
     const Consensus::LLMQParams& GetLLMQ(Consensus::LLMQType llmqType) const;
     bool HasLLMQ(Consensus::LLMQType llmqType) const;
+    uint32_t PowUpdateTimestamp() const { return nPowUpdateTimestamp; }
+    int64_t GetDwgPastBlocks(const CBlockIndex* pindex, const int nPowType) const;
+    /**
+     * Returns the target spacing for the given algo
+     */
+    int64_t GetTargetSpacing(const CBlockIndex* pindex, const int nPoWType) const;
 
 protected:
     CChainParams() {}
@@ -117,6 +124,7 @@ protected:
     Consensus::Params consensus;
     CMessageHeader::MessageStartChars pchMessageStart;
     int nDefaultPort;
+    int nMaxPoWBlocks;
     uint64_t nPruneAfterHeight;
     uint64_t m_assumed_blockchain_size;
     uint64_t m_assumed_chain_state_size;
@@ -144,6 +152,7 @@ protected:
     bool fBIP9CheckMasternodesUpgraded;
 
     void AddLLMQ(Consensus::LLMQType llmqType);
+    uint32_t nPowUpdateTimestamp;
 };
 
 /**

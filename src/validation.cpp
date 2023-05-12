@@ -53,6 +53,7 @@
 
 #include <llmq/instantsend.h>
 #include <llmq/chainlocks.h>
+#include <crypto/randomx/randomx.h>
 
 #include <statsd_client.h>
 
@@ -156,6 +157,11 @@ CFeeRate minRelayTxFee = CFeeRate(DEFAULT_MIN_RELAY_TX_FEE);
 
 CBlockPolicyEstimator feeEstimator;
 CTxMemPool mempool(&feeEstimator);
+
+// RandomX stuff
+
+// Used by both CPU miner and validator
+int global_randomx_flags;
 
 // Internal stuff
 namespace {
@@ -974,10 +980,6 @@ bool ReadBlockFromDisk(CBlock& block, const FlatFilePos& pos, const Consensus::P
     catch (const std::exception& e) {
         return error("%s: Deserialize or I/O error - %s at %s", __func__, e.what(), pos.ToString());
     }
-
-    // Check the header
-    if (!CheckProofOfWork(block.GetHash(), block.nBits, consensusParams))
-        return error("ReadBlockFromDisk: Errors in block header at %s", pos.ToString());
 
     return true;
 }
@@ -1863,10 +1865,17 @@ void StopScriptCheckWorkerThreads()
 
 VersionBitsCache versionbitscache GUARDED_BY(cs_main);
 
+
 int32_t ComputeBlockVersion(const CBlockIndex* pindexPrev, const Consensus::Params& params, bool fCheckMasternodesUpgraded)
 {
     LOCK(cs_main);
     int32_t nVersion = VERSIONBITS_TOP_BITS;
+
+        nVersion = VERSIONBITS_NEW_POW_VERSION;
+
+            if (pindexPrev->nPowType == CBlockHeader::RANDOMX_BLOCK) {
+                nVersion |= pindexPrev->nPowType;
+            }
 
     for (int i = 0; i < (int)Consensus::MAX_VERSION_BITS_DEPLOYMENTS; i++) {
         Consensus::DeploymentPos pos = Consensus::DeploymentPos(i);
@@ -2647,7 +2656,10 @@ void static UpdateTip(const CBlockIndex *pindexNew, const CChainParams& chainPar
         // Check the version of the last 100 blocks to see if we need to upgrade:
         for (int i = 0; i < 100 && pindex != nullptr; i++)
         {
-            int32_t nExpectedVersion = ComputeBlockVersion(pindex->pprev, chainParams.GetConsensus());
+            int32_t nExpectedVersion = ComputeBlockVersion(pindex->pprev, chainParams.GetConsensus(), pindex->IsRandomXProofOfWork());
+            if (pindex->IsRandomXProofOfWork())
+                nExpectedVersion |= CBlockHeader::RANDOMX_BLOCK;
+
             if (pindex->nVersion > VERSIONBITS_LAST_OLD_BLOCK_VERSION && (pindex->nVersion & ~nExpectedVersion) != 0)
                 ++nUpgraded;
             pindex = pindex->pprev;
@@ -3704,9 +3716,7 @@ static bool FindUndoPos(CValidationState &state, int nFile, FlatFilePos &pos, un
 
 static bool CheckBlockHeader(const CBlockHeader& block, CValidationState& state, const Consensus::Params& consensusParams, bool fCheckPOW = true)
 {
-    // Check proof of work matches claimed amount
-    if (fCheckPOW && !CheckProofOfWork(block.GetHash(), block.nBits, consensusParams))
-        return state.DoS(50, false, REJECT_INVALID, "high-hash", false, "proof of work failed");
+
 
     // Check DevNet
     if (!consensusParams.hashDevnetGenesisBlock.IsNull() &&
@@ -3716,6 +3726,15 @@ static bool CheckBlockHeader(const CBlockHeader& block, CValidationState& state,
                          REJECT_INVALID, "devnet-genesis");
     }
 
+    // Check proof of work matches claimed amount
+    if (fCheckPOW) {
+        if (block.IsRandomX() && block.nTime >= Params().PowUpdateTimestamp()) {
+            if (!CheckRandomXProofOfWork(block, block.nBits, consensusParams)) {
+                LogPrintf("%s: randomx proof of work failed %s\n", __func__, block.GetHash().GetHex());
+                return state.DoS(50, false, REJECT_INVALID, "high-hash", false, "randomx proof of work failed");
+            }
+        }
+    }
     return true;
 }
 
@@ -3730,8 +3749,9 @@ bool CheckBlock(const CBlock& block, CValidationState& state, const Consensus::P
 
     // Check that the header is valid (particularly PoW).  This is mostly
     // redundant with the call in AcceptBlockHeader.
-    if (!CheckBlockHeader(block, state, consensusParams, fCheckPOW))
+    if (!CheckBlockHeader(block, state, consensusParams, fCheckPOW)) {
         return false;
+    }
 
     // Check the merkle root.
     if (fCheckMerkleRoot) {
@@ -3804,6 +3824,21 @@ static CBlockIndex* GetLastCheckpoint(const CCheckpointData& data) EXCLUSIVE_LOC
     return nullptr;
 }
 
+bool CheckConsecutivePoW(const CBlock& block, const CBlockIndex* pindexPrev) {
+
+    // iterate through previous block indexes until the genesis block is hit,
+    // a proof of stake block is hit, or the limit is reached for pow blocks
+    for (int i = 1; i <= Params().MaxConsecutivePoWBlocks(); i++) {
+        if (!pindexPrev) {
+            return true;
+        }
+
+        pindexPrev = pindexPrev->pprev;
+    }
+
+    return false;
+}
+
 /** Context-dependent validity checks.
  *  By "context", we mean only the previous block headers, but not the UTXO
  *  set; UTXO-related validity checks are done in ConnectBlock().
@@ -3820,19 +3855,7 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
 
     // Check proof of work
     const Consensus::Params& consensusParams = params.GetConsensus();
-    if(Params().NetworkIDString() == CBaseChainParams::MAIN && nHeight <= 68589){
-        // architecture issues with DGW v1 and v2)
-        unsigned int nBitsNext = GetNextWorkRequired(pindexPrev, &block, consensusParams);
-        double n1 = ConvertBitsToDouble(block.nBits);
-        double n2 = ConvertBitsToDouble(nBitsNext);
 
-        if (abs(n1-n2) > n1*0.5)
-            return state.DoS(100, error("%s : incorrect proof of work (DGW pre-fork) - %f %f %f at %d", __func__, abs(n1-n2), n1, n2, nHeight),
-                            REJECT_INVALID, "bad-diffbits");
-    } else {
-        if (block.nBits != GetNextWorkRequired(pindexPrev, &block, consensusParams))
-            return state.DoS(100, false, REJECT_INVALID, "bad-diffbits", false, strprintf("incorrect proof of work at %d", nHeight));
-    }
 
     // Check against checkpoints
     if (fCheckpointsEnabled) {
@@ -3852,13 +3875,11 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
     if (block.GetBlockTime() > nAdjustedTime + MAX_FUTURE_BLOCK_TIME)
         return state.Invalid(false, REJECT_INVALID, "time-too-new", strprintf("block timestamp too far in the future %d %d", block.GetBlockTime(), nAdjustedTime + 2 * 60 * 60));
 
-    // check for version 2, 3 and 4 upgrades
-    if((block.nVersion < 2 && nHeight >= consensusParams.BIP34Height) ||
-       (block.nVersion < 3 && nHeight >= consensusParams.BIP66Height) ||
-       (block.nVersion < 4 && nHeight >= consensusParams.BIP65Height))
-            return state.Invalid(false, REJECT_OBSOLETE, strprintf("bad-version(0x%08x)", block.nVersion),
-                                 strprintf("rejected nVersion=0x%08x block", block.nVersion));
-
+    if (block.nTime >= Params().PowUpdateTimestamp()) {
+        if (!block.IsRandomX())
+            return state.DoS(33, error("%s - bad-pow-algo-use-updated-algos", __func__), REJECT_OBSOLETE,
+                                 "unexpected hash, please ensure its randomx");
+    }
     return true;
 }
 
@@ -3954,6 +3975,14 @@ bool BlockManager::AcceptBlockHeader(const CBlockHeader& block, CValidationState
 
         if (!CheckBlockHeader(block, state, chainparams.GetConsensus()))
             return error("%s: Consensus::CheckBlockHeader: %s, %s", __func__, hash.ToString(), FormatStateMessage(state));
+
+        //bool fCheckPoW = !block.fProofOfWork;
+
+        // Don't check RandomX as we might not have the KeyBlock yet
+        if (!block.IsRandomX() && !CheckBlockHeader(block, state, chainparams.GetConsensus())) {
+            return error("%s: Consensus::CheckBlockHeader: %s, %s", __func__, hash.ToString(),
+                         FormatStateMessage(state));
+        }
 
         // Get prev block index
         CBlockIndex* pindexPrev = nullptr;

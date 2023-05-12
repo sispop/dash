@@ -13,8 +13,11 @@ class CBlock;
 class CBlockIndex;
 class CTxMemPool;
 class UniValue;
+class arith_uint256;
 
 static constexpr int NUM_GETBLOCKSTATS_PERCENTILES = 5;
+
+static const unsigned int ALGO_RATIO_LOOK_BACK_BLOCK_COUNT = 1440; // ~1 day
 
 /**
  * Get the difficulty of the net wrt to the given block index.
@@ -23,6 +26,8 @@ static constexpr int NUM_GETBLOCKSTATS_PERCENTILES = 5;
  * difficulty (4295032833 hashes).
  */
 double GetDifficulty(const CBlockIndex* blockindex);
+double GetDifficulty(const uint32_t nBits);
+double GetDifficulty(const arith_uint256 bn);
 
 /** Callback for when block tip changed. */
 void RPCNotifyBlockChange(bool ibd, const CBlockIndex *);

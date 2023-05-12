@@ -38,59 +38,150 @@
 #include <memory>
 #include <stdint.h>
 
+// RandomX
+#include <crypto/randomx/randomx.h>
+#include <crypto/hash-ops.h>
+
+std::map<std::string, CBlock> mapProgPowTemplates;
+std::map<std::string, CBlock> mapRandomXTemplates;
+
+unsigned int ParseConfirmTarget(const UniValue& value)
+{
+    int target = value.get_int();
+    unsigned int max_target = ::feeEstimator.HighestTargetTracked(FeeEstimateHorizon::LONG_HALFLIFE);
+    if (target < 1 || (unsigned int)target > max_target) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Invalid conf_target, must be between %u - %u", 1, max_target));
+    }
+    return (unsigned int)target;
+}
+
+enum class MiningType {
+    RandomX,
+    PoS,
+    Invalid
+};
+
+MiningType ParseMiningType(const std::string &type) {
+    if (type == "randomx")
+        return MiningType::RandomX;
+    if (type == "pos")
+        return MiningType::PoS;
+    return MiningType::Invalid;
+}
+
 /**
  * Return average network hashes per second based on the last 'lookup' blocks,
  * or from the last difficulty change if 'lookup' is nonpositive.
  * If 'height' is nonnegative, compute the estimate at the time when a given block was found.
  */
-static UniValue GetNetworkHashPS(int lookup, int height) {
+static UniValue GetNetworkHashPS(int lookup, int height, MiningType type) {
     CBlockIndex *pb = ::ChainActive().Tip();
 
     if (height >= 0 && height < ::ChainActive().Height())
         pb = ::ChainActive()[height];
 
+    // if after fork, set pb to fork height unless specifying pos or x16rt
+
     if (pb == nullptr || !pb->nHeight)
         return 0;
 
     // If lookup is -1, then use blocks since last difficulty change.
-    if (lookup <= 0)
-        lookup = pb->nHeight % Params().GetConsensus().DifficultyAdjustmentInterval() + 1;
+    int32_t minLookup = lookup < 0 ? 2 : 0;
 
-    // If lookup is larger than chain, then set it to chain length.
-    if (lookup > pb->nHeight)
-        lookup = pb->nHeight;
+    // The total work in the considered timespan
+    arith_uint256 workDiff;
 
-    CBlockIndex *pb0 = pb;
-    int64_t minTime = pb0->GetBlockTime();
-    int64_t maxTime = minTime;
-    for (int i = 0; i < lookup; i++) {
-        pb0 = pb0->pprev;
-        int64_t time = pb0->GetBlockTime();
-        minTime = std::min(time, minTime);
-        maxTime = std::max(time, maxTime);
+    CBlockIndex *pbLast = pb;
+    CBlockIndex *pbFirst = nullptr;
+    bool found = false;
+    while (pb->nHeight > 0 && lookup != 0)
+    {
+        --lookup;
+
+        // find the last of the algo
+        switch (type) {
+        case MiningType::RandomX:
+            if (pb->GetBlockTime() < Params().PowUpdateTimestamp()) return 0;
+            if (pb->IsRandomXProofOfWork()) found=true;
+            break;
+        default:
+            // Unknown Algo
+            return 0;
+        }
+
+        if (found) {
+            pbLast = pb;
+            break;
+        }
+
+        pb = pb->pprev;
     }
+
+    if (!found) return 0;
+
+    pbFirst = pbLast;
+
+    // find the nth previous
+    int32_t nCountBlocks = 0, nCountAlgoBlocks = 1;
+    while ((nCountBlocks < lookup || nCountAlgoBlocks < minLookup) &&
+           (pb->nHeight > 1))
+    {
+        ++nCountBlocks;
+
+        pb = pb->pprev;
+
+        switch (type) {
+        case MiningType::RandomX:
+            if (pb->IsRandomXProofOfWork()) {
+                ++nCountAlgoBlocks;
+                workDiff += GetBlockProof(*pbFirst);
+                pbFirst = pb;
+            }
+            break;
+        default:
+          return 0;
+        }
+
+        // Check if we should continue
+        if ((type == MiningType::RandomX) &&
+            (pb->GetBlockTime() < Params().PowUpdateTimestamp()))
+        {
+            // Don't keep searching, abort now
+            break;
+        }
+    }
+
+    // only one was found
+    if (pbFirst == pbLast) return 0;
+
+    int64_t minTime = pbFirst->GetBlockTime();
+    int64_t maxTime = pbLast->GetBlockTime();
 
     // In case there's a situation where minTime == maxTime, we don't want a divide by zero exception.
     if (minTime == maxTime)
         return 0;
 
-    arith_uint256 workDiff = pb->nChainWork - pb0->nChainWork;
-    int64_t timeDiff = maxTime - minTime;
+    if (type != MiningType::RandomX) {
+        workDiff = pbLast->nChainWork - pbFirst->nChainWork;
+    }
 
+    int64_t timeDiff = maxTime - minTime;
     return workDiff.getdouble() / timeDiff;
 }
 
 static UniValue getnetworkhashps(const JSONRPCRequest& request)
 {
-    if (request.fHelp || request.params.size() > 2)
+    if (request.fHelp || request.params.size() > 3)
         throw std::runtime_error(
             RPCHelpMan{"getnetworkhashps",
                 "\nReturns the estimated network hashes per second based on the last n blocks.\n"
                 "Pass in [blocks] to override # of blocks, -1 specifies since last difficulty change.\n"
-                "Pass in [height] to estimate the network speed at the time when a certain block was found.\n",
+                "Pass in [height] to estimate the network speed at the time when a certain block was found.\n"
+                "Pass in [algo] to estimate the network hash for a different algo then your wallet is set to.\n",
                 {
                     {"nblocks", RPCArg::Type::NUM, /* default */ "120", "The number of blocks, or -1 for blocks since last difficulty change."},
                     {"height", RPCArg::Type::NUM, /* default */ "-1", "To estimate at the time of the given height."},
+                    {"algo", RPCArg::Type::STR, /* default */ "+GetMiningType(GetMiningAlgorithm())+", "Algo to calculate [randomx, pos].\n"},
                 },
                 RPCResult{
                     RPCResult::Type::NUM, "", "Hashes per second estimated"},
@@ -101,7 +192,14 @@ static UniValue getnetworkhashps(const JSONRPCRequest& request)
             }.ToString());
 
     LOCK(cs_main);
-    return GetNetworkHashPS(!request.params[0].isNull() ? request.params[0].get_int() : 120, !request.params[1].isNull() ? request.params[1].get_int() : -1);
+
+    MiningType type = ParseMiningType(!request.params[2].isNull()
+                                          ? request.params[2].get_str()
+                                          : GetMiningType(GetMiningAlgorithm(), false));
+
+    return GetNetworkHashPS(!request.params[0].isNull() ? request.params[0].get_int() : 180,
+                            !request.params[1].isNull() ? request.params[1].get_int() : -1,
+                            type);
 }
 
 #if ENABLE_MINER
@@ -117,6 +215,7 @@ UniValue generateBlocks(std::shared_ptr<CReserveScript> coinbaseScript, int nGen
     }
     unsigned int nExtraNonce = 0;
     UniValue blockHashes(UniValue::VARR);
+    InitRandomXLightCache(nHeight);
     while (nHeight < nHeightEnd && !ShutdownRequested())
     {
         std::unique_ptr<CBlockTemplate> pblocktemplate(BlockAssembler(Params()).CreateNewBlock(coinbaseScript->reserveScript));
@@ -130,6 +229,34 @@ UniValue generateBlocks(std::shared_ptr<CReserveScript> coinbaseScript, int nGen
         while (nMaxTries > 0 && pblock->nNonce < std::numeric_limits<uint32_t>::max() && !CheckProofOfWork(pblock->GetHash(), pblock->nBits, Params().GetConsensus()) && !ShutdownRequested()) {
             ++pblock->nNonce;
             --nMaxTries;
+        }
+        if (pblock->IsRandomX() && pblock->nTime >= Params().PowUpdateTimestamp()) {
+            char hash[RANDOMX_HASH_SIZE];
+
+            arith_uint256 bnTarget;
+            bool fNegative;
+            bool fOverflow;
+            static const int nInnerLoopCount = 0x10000;
+            bnTarget.SetCompact(pblock->nBits, &fNegative, &fOverflow);
+
+            while (nMaxTries > 0 && pblock->nNonce < nInnerLoopCount && !ShutdownRequested()) {
+                // RandomX hash
+                uint256 hash_blob = pblock->GetRandomXHeaderHash();
+                randomx_calculate_hash(GetMyMachineValidating(), &hash_blob, sizeof uint256(), hash);
+
+                uint256 uint256Hash = RandomXHashToUint256(hash);
+
+                // Bypass regtest check, actually allows us to generate blocks in regtest mode instantly
+                if (Params().NetworkIDString() == "regtest")
+                    break;
+
+                // Check proof of work matches claimed amount
+                if (UintToArith256(uint256Hash) < bnTarget)
+                    break;
+
+                ++pblock->nNonce;
+                --nMaxTries;
+            }
         }
         if (nMaxTries == 0 || ShutdownRequested()) {
             break;
@@ -211,6 +338,7 @@ static UniValue getmininginfo(const JSONRPCRequest& request)
                     "  \"currentblocksize\" : nnn,   (numeric, optional) The block size of the last assembled block (only present if a block was ever assembled)\n"
                     "  \"currentblocktx\" : nnn,     (numeric, optional) The number of block transactions of the last assembled block (only present if a block was ever assembled)\n"
                     "  \"difficulty\" : xxx.xxxxx    (numeric) The current difficulty\n"
+                    "  \"algorithm\": \"xxxx\",        (string) Algorithm set to mine (randomx)\n"
                     "  \"networkhashps\" : nnn,      (numeric) The network hashes per second\n"
                     "  \"pooledtx\" : n              (numeric) The size of the mempool\n"
                     "  \"chain\" : \"xxxx\",           (string) current network name as defined in BIP70 (main, test, regtest)\n"
@@ -224,6 +352,10 @@ static UniValue getmininginfo(const JSONRPCRequest& request)
             }.ToString());
     }
 
+    int nAlgo = GetMiningAlgorithm();
+    std::string sMiningAlgo = GetMiningType(nAlgo, false);
+
+    int nBlockType = CBlock::RANDOMX_BLOCK;
     LOCK(cs_main);
 
     UniValue obj(UniValue::VOBJ);
@@ -231,6 +363,7 @@ static UniValue getmininginfo(const JSONRPCRequest& request)
     if (BlockAssembler::m_last_block_size) obj.pushKV("currentblocksize", *BlockAssembler::m_last_block_size);
     if (BlockAssembler::m_last_block_num_txs) obj.pushKV("currentblocktx", *BlockAssembler::m_last_block_num_txs);
     obj.pushKV("difficulty",       (double)GetDifficulty(::ChainActive().Tip()));
+    obj.pushKV("algorithm",        sMiningAlgo);
     obj.pushKV("networkhashps",    getnetworkhashps(request));
     obj.pushKV("pooledtx",         (uint64_t)mempool.size());
     obj.pushKV("chain",            Params().NetworkIDString());
@@ -238,6 +371,41 @@ static UniValue getmininginfo(const JSONRPCRequest& request)
     return obj;
 }
 
+
+static UniValue setminingalgo(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "setminingalgo algorithm\n"
+            "\nChanges your mining algorithm to [algorithm].  Note that mining must be turned off when command is used.  This will also have the side effect of clearing your mining statistics.\n"
+            "\nArguments:\n"
+            "1. algorithm   (string, required) Algorithm to mine [randomx].\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"success\": true|false, (boolean) Status of the switch\n"
+            "  \"message\": \"text\",     (text) Informational message about the switch\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("setminingalgo", "randomx")
+            + HelpExampleRpc("setminingalgo", "randomx")
+       );
+
+    if (GenerateActive())
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "mining must be stopped to change algorithm");
+
+    std::string sOldAlgo = GetMiningType(GetMiningAlgorithm(), false);
+    std::string sNewAlgo = request.params[0].get_str();
+    // Check if it's a mining algorithm
+    if (!SetMiningAlgorithm(sNewAlgo)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("%s is not a supported mining type", sNewAlgo));
+    }
+    ClearHashSpeed();
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("success", true);
+    result.pushKV("message", strprintf("Mining algorithm changed from %s to %s", sOldAlgo, sNewAlgo));
+    return result;
+
+}
 
 // NOTE: Unlike wallet RPC (which use BTC values), mining RPCs follow GBT (BIP 22) in using satoshi amounts
 static UniValue prioritisetransaction(const JSONRPCRequest& request)
@@ -299,6 +467,246 @@ static std::string gbt_vb_name(const Consensus::DeploymentPos pos) {
     return s;
 }
 
+
+template<int nPoWType>
+static UniValue getblocktemplate_impl(const std::string &strMode, const UniValue &lpval, const std::set<std::string> setClientRules, int64_t nMaxVersionPreVB) {
+    static unsigned int nTransactionsUpdatedLast;
+
+    if (!lpval.isNull())
+    {
+        // Wait to respond until either the best block changes, OR a minute has passed and there are more transactions
+        uint256 hashWatchedChain;
+        std::chrono::steady_clock::time_point checktxtime;
+        unsigned int nTransactionsUpdatedLastLP;
+
+        if (lpval.isStr())
+        {
+            // Format: <hashBestChain><nTransactionsUpdatedLast>
+            std::string lpstr = lpval.get_str();
+
+            hashWatchedChain.SetHex(lpstr.substr(0, 64));
+            nTransactionsUpdatedLastLP = atoi64(lpstr.substr(64));
+        }
+        else
+        {
+            // NOTE: Spec does not specify behaviour for non-string longpollid, but this makes testing easier
+            hashWatchedChain = ::ChainActive().Tip()->GetBlockHash();
+            nTransactionsUpdatedLastLP = nTransactionsUpdatedLast;
+        }
+
+        // Release the wallet and main lock while waiting
+        LEAVE_CRITICAL_SECTION(cs_main);
+        {
+            checktxtime = std::chrono::steady_clock::now() + std::chrono::minutes(1);
+
+            WAIT_LOCK(g_best_block_mutex, lock);
+            while (g_best_block == hashWatchedChain && IsRPCRunning())
+            {
+                if (g_best_block_cv.wait_until(lock, checktxtime) == std::cv_status::timeout)
+                {
+                    // Timeout: Check transactions for update
+                    // without holding ::mempool.cs to avoid deadlocks
+                    if (mempool.GetTransactionsUpdated() != nTransactionsUpdatedLastLP)
+                        break;
+                    checktxtime += std::chrono::seconds(10);
+                }
+            }
+        }
+        ENTER_CRITICAL_SECTION(cs_main);
+
+        if (!IsRPCRunning())
+            throw JSONRPCError(RPC_CLIENT_NOT_CONNECTED, "Shutting down");
+        // TODO: Maybe recheck connections/IBD and (if something wrong) send an expires-immediately template to stop miners?
+    }
+    // If the caller is indicating segwit support, then allow CreateNewBlock()
+    // to select witness transactions, after segwit activates (otherwise
+    // don't).
+
+    // Update block
+    static CBlockIndex* pindexPrev;
+    static int64_t nStart;
+    static std::unique_ptr<CBlockTemplate> pblocktemplate;
+    // Cache whether the last invocation was with segwit support, to avoid returning
+    // a segwit-block to a non-segwit caller.
+  
+    if (pindexPrev != ::ChainActive().Tip() ||
+        (mempool.GetTransactionsUpdated() != nTransactionsUpdatedLast && GetTime() - nStart > 5))
+    {
+        // Clear pindexPrev so future calls make a new block, despite any failures from here on
+        pindexPrev = nullptr;
+        if constexpr (nPoWType == CBlockHeader::RANDOMX_BLOCK)
+            mapRandomXTemplates.clear();
+
+        // Store the pindexBest used before CreateNewBlock, to avoid races
+        nTransactionsUpdatedLast = mempool.GetTransactionsUpdated();
+        CBlockIndex* pindexPrevNew = ::ChainActive().Tip();
+        nStart = GetTime();
+
+        // Get mining address if it is set
+        CScript script;
+        std::string sAddress = gArgs.GetArg("-miningaddress", "");
+
+        // Create new block
+        pblocktemplate = BlockAssembler(Params()).CreateNewBlock(script, nPoWType);
+        if (!pblocktemplate)
+            throw JSONRPCError(RPC_VERIFY_ERROR, "Created block is rejected or otherwise unable to successfully create a new block");
+
+        // Need to update only after we know CreateNewBlock succeeded
+        pindexPrev = pindexPrevNew;
+    }
+    assert(pindexPrev);
+    CBlock* pblock = &pblocktemplate->block; // pointer for convenience
+    const Consensus::Params& consensusParams = Params().GetConsensus();
+
+    // Update nTime
+    UpdateTime(pblock, consensusParams, pindexPrev);
+    pblock->nNonce = 0;
+
+    UniValue aCaps(UniValue::VARR); aCaps.push_back("proposal");
+
+    UniValue mapaccumulatorhashes(UniValue::VOBJ);
+
+    UniValue transactions(UniValue::VARR);
+    std::map<uint256, int64_t> setTxIndex;
+    int i = 0;
+    for (const auto& it : pblock->vtx) {
+        const CTransaction& tx = *it;
+        uint256 txHash = tx.GetHash();
+        setTxIndex[txHash] = i++;
+
+        if (tx.IsCoinBase())
+            continue;
+
+        UniValue entry(UniValue::VOBJ);
+
+        entry.pushKV("data", EncodeHexTx(tx));
+        entry.pushKV("hash", txHash.GetHex());
+
+        UniValue deps(UniValue::VARR);
+        for (const CTxIn &in : tx.vin)
+        {
+            if (setTxIndex.count(in.prevout.hash))
+                deps.push_back(setTxIndex[in.prevout.hash]);
+        }
+        entry.pushKV("depends", deps);
+
+        int index_in_template = i - 1;
+        entry.pushKV("fee", pblocktemplate->vTxFees[index_in_template]);
+        entry.pushKV("sigops", pblocktemplate->vTxSigOps[index_in_template]);
+
+        transactions.push_back(entry);
+    }
+
+    UniValue aux(UniValue::VOBJ);
+
+    arith_uint256 hashTarget = arith_uint256().SetCompact(pblock->nBits);
+
+    UniValue aMutable(UniValue::VARR);
+    aMutable.push_back("time");
+    aMutable.push_back("transactions");
+    aMutable.push_back("prevblock");
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("capabilities", aCaps);
+
+    UniValue aRules(UniValue::VARR);
+    UniValue vbavailable(UniValue::VOBJ);
+    for (int j = 0; j < (int)Consensus::MAX_VERSION_BITS_DEPLOYMENTS; ++j) {
+        Consensus::DeploymentPos pos = Consensus::DeploymentPos(j);
+        ThresholdState state = VersionBitsState(pindexPrev, consensusParams, pos, versionbitscache);
+        switch (state) {
+            case ThresholdState::DEFINED:
+            case ThresholdState::FAILED:
+                // Not exposed to GBT at all
+                break;
+            case ThresholdState::LOCKED_IN:
+                // Ensure bit is set in block version
+                pblock->nVersion |= VersionBitsMask(consensusParams, pos);
+                // FALL THROUGH to get vbavailable set...
+            case ThresholdState::STARTED:
+            {
+                const struct VBDeploymentInfo& vbinfo = VersionBitsDeploymentInfo[pos];
+                vbavailable.pushKV(gbt_vb_name(pos), consensusParams.vDeployments[pos].bit);
+                if (setClientRules.find(vbinfo.name) == setClientRules.end()) {
+                    if (!vbinfo.gbt_force) {
+                        // If the client doesn't support this, don't indicate it in the [default] version
+                        pblock->nVersion &= ~VersionBitsMask(consensusParams, pos);
+                    }
+                }
+                break;
+            }
+            case ThresholdState::ACTIVE:
+            {
+                // Add to rules only
+                const struct VBDeploymentInfo& vbinfo = VersionBitsDeploymentInfo[pos];
+                aRules.push_back(gbt_vb_name(pos));
+                if (setClientRules.find(vbinfo.name) == setClientRules.end()) {
+                    // Not supported by the client; make sure it's safe to proceed
+                    if (!vbinfo.gbt_force) {
+                        // If we do anything other than throw an exception here, be sure version/force isn't sent to old clients
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Support for '%s' rule requires explicit client support", vbinfo.name));
+                    }
+                }
+                break;
+            }
+        }
+    }
+    result.pushKV("version", pblock->nVersion);
+    result.pushKV("rules", aRules);
+    result.pushKV("vbavailable", vbavailable);
+    result.pushKV("vbrequired", int(0));
+
+    if (nMaxVersionPreVB >= 2) {
+        // If VB is supported by the client, nMaxVersionPreVB is -1, so we won't get here
+        // Because BIP 34 changed how the generation transaction is serialized, we can only use version/force back to v2 blocks
+        // This is safe to do [otherwise-]unconditionally only because we are throwing an exception above if a non-force deployment gets activated
+        // Note that this can probably also be removed entirely after the first BIP9 non-force deployment (ie, probably segwit) gets activated
+        aMutable.push_back("version/force");
+    }
+
+    result.pushKV("previousblockhash", pblock->hashPrevBlock.GetHex());
+    result.pushKV("transactions", transactions);
+    result.pushKV("coinbaseaux", aux);
+    result.pushKV("coinbasevalue", (int64_t)pblock->vtx[0]->GetValueOut());
+    result.pushKV("longpollid", ::ChainActive().Tip()->GetBlockHash().GetHex() + i64tostr(nTransactionsUpdatedLast));
+    result.pushKV("target", hashTarget.GetHex());
+    result.pushKV("mintime", (int64_t)pindexPrev->GetMedianTimePast()+1);
+    result.pushKV("mutable", aMutable);
+    result.pushKV("noncerange", "00000000ffffffff");
+    int64_t nSigOpLimit = MAX_LEGACY_BLOCK_SIZE/50;
+    int64_t nSizeLimit = MAX_LEGACY_BLOCK_SIZE;
+    result.pushKV("sigoplimit", nSigOpLimit);
+    result.pushKV("sizelimit", nSizeLimit);
+    result.pushKV("weightlimit", (int64_t)MAX_DIP0001_BLOCK_SIZE);
+    result.pushKV("curtime", pblock->GetBlockTime());
+    result.pushKV("bits", strprintf("%08x", pblock->nBits));
+    result.pushKV("height", (int64_t)(pindexPrev->nHeight+1));
+
+    result.pushKV("mining_disabled", (!CheckConsecutivePoW(*pblock , pindexPrev))? true : false );
+    if constexpr (nPoWType == CBlockHeader::RANDOMX_BLOCK) {      // if (pblock->IsRandomX()) {
+        result.pushKV("rxrpcseed", GetKeyBlock(pblock->nHeight).GetHex());
+        std::string address = gArgs.GetArg("-miningaddress", "");
+        if (IsValidDestinationString(address)) {
+            static std::string lastheader = "";
+            if (mapRandomXTemplates.count(lastheader)) {
+                if (pblock->nTime - 60 < mapRandomXTemplates.at(lastheader).nTime) {
+                    result.pushKV("rxrpcheader", lastheader);
+                    return result;
+                }
+            }
+
+            CDataStream ssBlockHeader(SER_NETWORK, PROTOCOL_VERSION);
+            ssBlockHeader << CRandomXInput(*pblock);
+            std::string blockHeaderHex = HexStr(ssBlockHeader);
+            result.pushKV("rxrpcheader", blockHeaderHex);
+            mapRandomXTemplates[blockHeaderHex] = *pblock;
+            lastheader = blockHeaderHex;
+        }
+    }
+
+    return result;
+}
+
 static UniValue getblocktemplate(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() > 1)
@@ -314,6 +722,7 @@ static UniValue getblocktemplate(const JSONRPCRequest& request)
                     {"template_request", RPCArg::Type::OBJ, /* default_val */ "", "A json object in the following spec",
                         {
                             {"mode", RPCArg::Type::STR, /* treat as named arg */ RPCArg::Optional::OMITTED_NAMED_ARG, "This must be set to \"template\", \"proposal\" (see BIP 23), or omitted"},
+                            {"algo", RPCArg::Type::STR, /* treat as named arg */ RPCArg::Optional::OMITTED_NAMED_ARG,"This must be set to \"randomx\" or omitted"},
                             {"capabilities", RPCArg::Type::ARR, /* treat as named arg */ RPCArg::Optional::OMITTED_NAMED_ARG, "A list of strings",
                                 {
                                     {"support", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "client side supported feature, 'longpoll', 'coinbasetxn', 'coinbasevalue', 'proposal', 'serverlist', 'workid'"},
@@ -386,6 +795,8 @@ static UniValue getblocktemplate(const JSONRPCRequest& request)
             "  ],\n"
             "  \"superblocks_started\" : true|false, (boolean) true, if superblock payments started\n"
             "  \"superblocks_enabled\" : true|false, (boolean) true, if superblock payments are enabled\n"
+            "  \"rxrpcheader\" : \"xxxx\"            (string) The header that can be used by the local CPU miner to mine a randomx block (using -miningaddress) as the destination for the coinbase tx\n"
+            "  \"rxrpcseed\" : \"xxxx\"              (string) The seed hash of the randomx rxrpcheader given to user to be used by the local CPU miner\n"
             "  \"coinbase_payload\" : \"xxxxxxxx\"    (string) coinbase transaction payload data encoded in hexadecimal\n"
             "}\n"
                 },
@@ -405,6 +816,8 @@ static UniValue getblocktemplate(const JSONRPCRequest& request)
     {
         const UniValue& oparam = request.params[0].get_obj();
         const UniValue& modeval = find_value(oparam, "mode");
+        int nPoWType = GetMiningAlgorithm();
+        const UniValue& algoval = find_value(oparam, "algo");
         if (modeval.isStr())
             strMode = modeval.get_str();
         else if (modeval.isNull())
@@ -413,6 +826,16 @@ static UniValue getblocktemplate(const JSONRPCRequest& request)
         }
         else
             throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid mode");
+        if (algoval.isStr()) {
+            std::string strAlgo = algoval.get_str();
+            if (strAlgo == "randomx")
+                nPoWType = MINE_RANDOMX;
+            else
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid algo");
+        }
+        else if (!algoval.isNull())
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid algo");
+
         lpval = find_value(oparam, "longpollid");
 
         if (strMode == "proposal")
@@ -1006,6 +1429,7 @@ static const CRPCCommand commands[] =
     { "mining",             "getmininginfo",          &getmininginfo,          {} },
     { "mining",             "prioritisetransaction",  &prioritisetransaction,  {"txid","fee_delta"} },
     { "mining",             "getblocktemplate",       &getblocktemplate,       {"template_request"} },
+    { "mining",             "setminingalgo",          &setminingalgo,          {"algo"} },
     { "mining",             "submitblock",            &submitblock,            {"hexdata","dummy"} },
     { "mining",             "submitheader",           &submitheader,           {"hexdata"} },
 

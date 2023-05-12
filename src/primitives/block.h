@@ -20,9 +20,17 @@
  * in the block is a special one that creates a new coin owned by the creator
  * of the block.
  */
+
+extern uint32_t nPowTimeStampActive;
+
 class CBlockHeader
 {
 public:
+
+    enum {
+        RANDOMX_BLOCK = ( 1 << 25)
+    };
+
     // header
     int32_t nVersion;
     uint256 hashPrevBlock;
@@ -30,7 +38,8 @@ public:
     uint32_t nTime;
     uint32_t nBits;
     uint32_t nNonce;
-
+    int nHeight;
+    int nPoWType;
     CBlockHeader()
     {
         SetNull();
@@ -46,6 +55,7 @@ public:
         nTime = 0;
         nBits = 0;
         nNonce = 0;
+
     }
 
     bool IsNull() const
@@ -53,12 +63,21 @@ public:
         return (nBits == 0);
     }
 
+            int32_t nPowType = (nVersion & (RANDOMX_BLOCK));
     uint256 GetHash() const;
 
     int64_t GetBlockTime() const
     {
         return (int64_t)nTime;
     }
+
+    uint256 GetRandomXHeaderHash() const;
+
+    bool IsRandomX() const {
+        return nVersion & RANDOMX_BLOCK && nTime >= nPowTimeStampActive;
+    }
+
+
 };
 
 class CompressedHeaderBitField
@@ -186,6 +205,11 @@ struct CompressibleBlockHeader : CBlockHeader {
 class CBlock : public CBlockHeader
 {
 public:
+    int PowType() const {
+        if (IsRandomX())
+            return RANDOMX_BLOCK;
+        else return 0;
+    }
     // network and disk
     std::vector<CTransactionRef> vtx;
 
@@ -216,6 +240,7 @@ public:
         fChecked = false;
     }
 
+
     CBlockHeader GetBlockHeader() const
     {
         CBlockHeader block;
@@ -229,6 +254,11 @@ public:
     }
 
     std::string ToString() const;
+
+    bool IsRandomX() const {
+        return (nVersion & RANDOMX_BLOCK) && nTime >= nPowTimeStampActive;
+    }
+
 };
 
 
@@ -263,4 +293,25 @@ struct CBlockLocator
     }
 };
 
+class CRandomXInput : private CBlockHeader
+{
+public:
+    CRandomXInput(const CBlockHeader &header)
+    {
+        CBlockHeader::SetNull();
+        *((CBlockHeader*)this) = header;
+    }
+
+//    SERIALIZE_METHODS;
+    SERIALIZE_METHODS(CRandomXInput, obj) { READWRITE(obj.nVersion, obj.hashPrevBlock, obj.nTime, obj.nBits, obj.nNonce); }
+
+    template <typename Stream, typename Operation>
+    inline void SerializationOp(Stream& s, Operation ser_action) {
+        READWRITE(this->nVersion);
+        READWRITE(hashPrevBlock);
+        READWRITE(nTime);
+        READWRITE(nBits);
+        READWRITE(nNonce);
+    }
+};
 #endif // BITCOIN_PRIMITIVES_BLOCK_H

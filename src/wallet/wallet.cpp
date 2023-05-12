@@ -48,6 +48,7 @@
 #include <llmq/instantsend.h>
 #include <llmq/chainlocks.h>
 
+
 #include <assert.h>
 
 #include <boost/algorithm/string/replace.hpp>
@@ -2533,6 +2534,7 @@ bool CWalletTx::SubmitMemoryPoolAndRelay(std::string& err_string, bool relay, in
     // Don't try to submit coinbase transactions. These would fail anyway but would
     // cause log spam.
     if (IsCoinBase()) return false;
+
     // Don't try to submit conflicted or confirmed transactions.
     if (GetDepthInMainChain(locked_chain) != 0) return false;
     // Don't try to submit transactions locked via InstantSend.
@@ -2944,6 +2946,7 @@ CAmount CWallet::GetAnonymizableBalance(bool fSkipDenominated, bool fSkipUnconfi
     return nTotal;
 }
 
+
 // Note: calculated including unconfirmed,
 // that's ok as long as we use it for informational purposes only
 float CWallet::GetAverageAnonymizedRounds() const
@@ -3040,6 +3043,7 @@ void CWallet::AvailableCoins(interfaces::Chain::Lock& locked_chain, std::vector<
 
         if (nDepth < nMinDepth || nDepth > nMaxDepth)
             continue;
+
 
         for (unsigned int i = 0; i < pcoin->tx->vout.size(); i++) {
             bool found = false;

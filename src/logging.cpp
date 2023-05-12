@@ -163,7 +163,8 @@ const CLogCategoryDesc LogCategories[] =
     {BCLog::LEVELDB, "leveldb"},
     {BCLog::ALL, "1"},
     {BCLog::ALL, "all"},
-
+    {BCLog::MINING, "mining"},
+    {BCLog::BLOCKCREATION, "blockcreation"},
     //Start Dash
     {BCLog::CHAINLOCKS, "chainlocks"},
     {BCLog::GOBJECT, "gobject"},

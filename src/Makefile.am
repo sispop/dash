@@ -500,6 +500,14 @@ libdash_wallet_a_SOURCES = \
   wallet/coinselection.cpp \
   $(BITCOIN_CORE_H)
 
+if TARGET_ARM64
+  randomx_jit_base_SOURCES = \
+    crypto/randomx/jit_compiler_a64.cpp \
+    crypto/randomx/jit_compiler_a64.hpp \
+    crypto/randomx/jit_compiler_a64_static.hpp \
+    crypto/randomx/jit_compiler_a64_static.S
+endif
+
 libdash_wallet_tool_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
 libdash_wallet_tool_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 libdash_wallet_tool_a_SOURCES = \
@@ -539,7 +547,87 @@ crypto_libdash_crypto_base_a_SOURCES = \
   crypto/sha512.cpp \
   crypto/sha512.h \
   crypto/siphash.cpp \
-  crypto/siphash.h
+  crypto/siphash.h \
+  crypto/randomx/aes_hash.cpp \
+  crypto/randomx/aes_hash.hpp \
+  crypto/randomx/allocator.cpp \
+  crypto/randomx/allocator.hpp \
+  crypto/randomx/argon2.h \
+  crypto/randomx/argon2_core.c \
+  crypto/randomx/argon2_core.h \
+  crypto/randomx/argon2_ref.c \
+  crypto/randomx/argon2_ssse3.c \
+  crypto/randomx/assembly_generator_x86.cpp \
+  crypto/randomx/assembly_generator_x86.hpp \
+  crypto/randomx/blake2_generator.cpp \
+  crypto/randomx/blake2_generator.hpp\
+  crypto/randomx/bytecode_machine.cpp \
+  crypto/randomx/bytecode_machine.hpp \
+  crypto/randomx/common.hpp \
+  crypto/randomx/configuration.h \
+  crypto/randomx/cpu.cpp \
+  crypto/randomx/cpu.hpp \
+  crypto/randomx/dataset.cpp \
+  crypto/randomx/dataset.hpp \
+  crypto/randomx/instruction.cpp \
+  crypto/randomx/instruction.hpp \
+  crypto/randomx/instruction_weights.hpp \
+  crypto/randomx/instructions_portable.cpp \
+  crypto/randomx/intrin_portable.h \
+  crypto/randomx/jit_compiler.hpp \
+  crypto/randomx/jit_compiler_fallback.hpp \
+  $(randomx_jit_base_SOURCES) \
+  crypto/randomx/jit_compiler_x86.cpp \
+  crypto/randomx/jit_compiler_x86.hpp \
+  crypto/randomx/jit_compiler_x86_static.asm \
+  crypto/randomx/jit_compiler_x86_static.hpp \
+  crypto/randomx/jit_compiler_x86_static.S \
+  crypto/randomx/program.hpp \
+  crypto/randomx/randomx.cpp \
+  crypto/randomx/randomx.h \
+  crypto/randomx/reciprocal.c \
+  crypto/randomx/reciprocal.h \
+  crypto/randomx/soft_aes.cpp \
+  crypto/randomx/soft_aes.h \
+  crypto/randomx/superscalar.cpp \
+  crypto/randomx/superscalar.hpp \
+  crypto/randomx/superscalar_program.hpp \
+  crypto/randomx/utility.hpp \
+  crypto/randomx/virtual_machine.cpp \
+  crypto/randomx/virtual_machine.hpp \
+  crypto/randomx/virtual_memory.cpp \
+  crypto/randomx/virtual_memory.hpp \
+  crypto/randomx/vm_compiled.cpp \
+  crypto/randomx/vm_compiled.hpp \
+  crypto/randomx/vm_compiled_light.cpp \
+  crypto/randomx/vm_compiled_light.hpp \
+  crypto/randomx/vm_interpreted.cpp \
+  crypto/randomx/vm_interpreted.hpp \
+  crypto/randomx/vm_interpreted_light.cpp \
+  crypto/randomx/vm_interpreted_light.hpp \
+  crypto/randomx/blake2/blake2.h \
+  crypto/randomx/blake2/blake2-impl.h \
+  crypto/randomx/blake2/blake2b.c \
+  crypto/randomx/blake2/blamka-round-ref.h \
+  crypto/randomx/blake2/blamka-round-ssse3.h \
+  crypto/randomx/blake2/endian.h \
+  crypto/randomx/asm/configuration.asm \
+  crypto/randomx/asm/program_prologue_linux.inc \
+  crypto/randomx/asm/program_xmm_constants.inc \
+  crypto/randomx/asm/program_loop_load.inc \
+  crypto/randomx/asm/program_read_dataset.inc \
+  crypto/randomx/asm/program_read_dataset_sshash_init.inc \
+  crypto/randomx/asm/program_read_dataset_sshash_fin.inc \
+  crypto/randomx/asm/program_loop_store.inc \
+  crypto/randomx/asm/program_epilogue_store.inc \
+  crypto/randomx/asm/program_epilogue_linux.inc \
+  crypto/randomx/asm/program_sshash_load.inc \
+  crypto/randomx/asm/program_sshash_prefetch.inc \
+  crypto/randomx/asm/program_sshash_constants.inc \
+  crypto/randomx/asm/randomx_reciprocal.inc \
+  crypto/c_threads.h \
+  crypto/hash-ops.h \
+  crypto/rx-slow-hash.c
 
 if USE_ASM
 crypto_libdash_crypto_base_a_SOURCES += crypto/sha256_sse4.cpp
@@ -555,33 +643,10 @@ crypto_libdash_crypto_avx2_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 crypto_libdash_crypto_avx2_a_CPPFLAGS = $(AM_CPPFLAGS)
 crypto_libdash_crypto_avx2_a_CXXFLAGS += $(AVX2_CXXFLAGS)
 crypto_libdash_crypto_avx2_a_CPPFLAGS += -DENABLE_AVX2
-crypto_libdash_crypto_avx2_a_SOURCES = crypto/sha256_avx2.cpp
-
-# x11
-crypto_libdash_crypto_base_a_SOURCES += \
-  crypto/blake.c \
-  crypto/bmw.c \
-  crypto/cubehash.c \
-  crypto/echo.c \
-  crypto/groestl.c \
-  crypto/jh.c \
-  crypto/keccak.c \
-  crypto/luffa.c \
-  crypto/shavite.c \
-  crypto/simd.c \
-  crypto/skein.c \
-  crypto/sph_blake.h \
-  crypto/sph_bmw.h \
-  crypto/sph_cubehash.h \
-  crypto/sph_echo.h \
-  crypto/sph_groestl.h \
-  crypto/sph_jh.h \
-  crypto/sph_keccak.h \
-  crypto/sph_luffa.h \
-  crypto/sph_shavite.h \
-  crypto/sph_simd.h \
-  crypto/sph_skein.h \
-  crypto/sph_types.h
+crypto_libdash_crypto_avx2_a_SOURCES = \
+crypto/sha256_avx2.cpp \
+crypto/randomx/blake2/blamka-round-avx2.h \
+crypto/randomx/argon2_avx2.c
 
 crypto_libdash_crypto_x86_shani_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 crypto_libdash_crypto_x86_shani_a_CPPFLAGS = $(AM_CPPFLAGS)
@@ -864,6 +929,8 @@ CLEANFILES += compat/*.gcda compat/*.gcno
 CLEANFILES += consensus/*.gcda consensus/*.gcno
 CLEANFILES += crc32c/src/*.gcda crc32c/src/*.gcno
 CLEANFILES += crypto/*.gcda crypto/*.gcno
+CLEANFILES += crypto/randomx/*.gcda crypto/randomx/*.gcno
+CLEANFILES += crypto/randomx/blake2/*.gcda crypto/randomx/blake2/*.gcno
 CLEANFILES += index/*.gcda index/*.gcno
 CLEANFILES += interfaces/*.gcda interfaces/*.gcno
 CLEANFILES += node/*.gcda node/*.gcno

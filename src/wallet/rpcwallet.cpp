@@ -16,6 +16,7 @@
 #include <rpc/rawtransaction_util.h>
 #include <rpc/server.h>
 #include <rpc/util.h>
+#include <miner.h>
 #include <script/descriptor.h>
 #include <util/bip32.h>
 #include <util/fees.h>
@@ -3378,6 +3379,101 @@ UniValue generate(const JSONRPCRequest& request)
 }
 #endif //ENABLE_MINING
 
+UniValue generatecontinuous(const JSONRPCRequest& request)
+{
+    std::shared_ptr<CWallet> const wallet = GetWalletForJSONRPCRequest(request);
+    CWallet* const pwallet = wallet.get();
+    if (!wallet) return NullUniValue;
+
+    if (request.fHelp || request.params.size() > 3) {
+        throw std::runtime_error(
+                "generatecontinuous <activate> (threads) (override)\n"
+                "\nMine blocks continuously while the request is running.\n"
+                "\nArguments:\n"
+                "1. activate        (boolean, required) Enable or disable mining\n"
+                "2. threads         (int, required) for enabling, number of threads\n"
+                "3. override        (boolean, optional) override thread warnings\n"
+                "\nResult:\n"
+                "{\n"
+                "  \"success\": true|false,   (boolean) Status of the request\n"
+                "  \"algorithm\": \"string\",     (string) Algorithm being mined\n"
+                "  \"threads\": nnn,          (int) Number of threads being used\n"
+                "  \"message\": \"text\",         (string) Informational message\n"
+                "}\n"
+                "\nExamples:\n"
+                + HelpExampleCli("generatecontinuous", "true 4")
+                + HelpExampleRpc("generateoontinuous", "true, 4")
+        );
+    }
+
+    if (!request.params[0].isBool()) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Error: argument must be boolean");
+    }
+
+    bool fGenerate = request.params[0].get_bool();
+
+    int nThreads = 1;
+    if (request.params.size() > 1)
+        nThreads = request.params[1].get_int();
+
+    bool fOverride = false;
+    if (request.params.size() > 2)
+        fOverride = request.params[2].get_bool();
+
+    std::shared_ptr<CReserveScript> coinbase_script;
+    pwallet->GetScriptForMining(coinbase_script);
+
+    // If the keypool is exhausted, no script is returned at all.  Catch this.
+    if (!coinbase_script) {
+        throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT,
+                           "Error: Keypool ran out, please call keypoolrefill first");
+    }
+
+    //throw an error if no script was provided
+    if (coinbase_script->reserveScript.empty()) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "No coinbase script available");
+    }
+
+    int nAlgo = GetMiningAlgorithm();
+    std::string sAlgo = GetMiningType(nAlgo, false);
+    std::string sWarning = "";
+
+    if (fGenerate) {
+        if (GenerateActive())
+            throw JSONRPCError(RPC_INTERNAL_ERROR, "Mining already active");
+
+        int nCores = GetNumCores();
+
+        if ((nAlgo == MINE_RANDOMX) && (nThreads < 1)) {
+            sWarning = "RandomX must be at least 1 threads";
+            // Note this changes the nThreads input, for accuracy of the result
+            // message, So this check needs to be below the threads check above
+            nThreads = 1;
+        }
+
+        if (!fOverride && sWarning.compare(""))
+            throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Error: %s", sWarning.c_str()));
+    }
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("success", true);
+    result.pushKV("algorithm", sAlgo);
+    if (!fGenerate) {
+        result.pushKV("threads", 0);
+        result.pushKV("message", "Mining stopped");
+    } else {
+        ClearHashSpeed();
+        result.pushKV("threads", nThreads);
+        if (sWarning.compare(""))
+            result.pushKV("message", strprintf("Warning: %s", sWarning.c_str()));
+        else
+            result.pushKV("message", "Mining started");
+    }
+
+    generateBlocks(coinbase_script, nThreads, fGenerate, true);
+    return result;
+}
+
 static UniValue rescanblockchain(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() > 2) {
@@ -3983,6 +4079,7 @@ static const CRPCCommand commands[] =
     //  --------------------- ------------------------    -----------------------    ----------
 #if ENABLE_MINER
     { "generating",         "generate",                         &generate,                      {"nblocks","maxtries"} },
+    { "generating",         "generatecontinuous",               &generatecontinuous,            {"fGenerate"} },
 #else
     { "hidden",             "generate",                         &generate,                      {"nblocks","maxtries"} }, // Hidden as it isn't functional, just an error to let people know if miner isn't compiled
 #endif //ENABLE_MINER

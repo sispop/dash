@@ -5,7 +5,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <rpc/blockchain.h>
-
+#include <arith_uint256.h>
 #include <amount.h>
 #include <blockfilter.h>
 #include <chain.h>
@@ -33,7 +33,7 @@
 #include <validationinterface.h>
 #include <versionbitsinfo.h>
 #include <warnings.h>
-
+#include <pow.h>
 #include <evo/specialtx.h>
 #include <evo/cbtx.h>
 
@@ -64,13 +64,29 @@ extern void TxToJSON(const CTransaction& tx, const uint256 hashBlock, UniValue& 
 
 /* Calculate the difficulty for a given block index.
  */
-double GetDifficulty(const CBlockIndex* blockindex)
-{
-    CHECK_NONFATAL(blockindex);
 
-    int nShift = (blockindex->nBits >> 24) & 0xff;
+
+/* Calculate the difficulty for a given block index.
+ */
+double GetDifficulty(const CBlockIndex* blockindex) {
+    if (blockindex == nullptr)
+    {
+        return 1.0;
+    }
+
+    return GetDifficulty(blockindex->nBits);
+}
+
+double GetDifficulty(const arith_uint256 bn)
+{
+    return GetDifficulty(bn.GetCompact());
+}
+
+double GetDifficulty(const uint32_t nBits)
+{
+    uint32_t nShift = (nBits >> 24) & 0xff;
     double dDiff =
-        (double)0x0000ffff / (double)(blockindex->nBits & 0x00ffffff);
+        (double)0x0000ffff / (double)(nBits & 0x00ffffff);
 
     while (nShift < 29)
     {
@@ -85,6 +101,7 @@ double GetDifficulty(const CBlockIndex* blockindex)
 
     return dDiff;
 }
+
 
 static int ComputeNextBlockAndDepth(const CBlockIndex* tip, const CBlockIndex* blockindex, const CBlockIndex*& next)
 {
@@ -138,6 +155,17 @@ UniValue blockToJSON(const CBlock& block, const CBlockIndex* tip, const CBlockIn
     result.pushKV("versionHex", strprintf("%08x", block.nVersion));
     result.pushKV("merkleroot", block.hashMerkleRoot.GetHex());
     bool chainLock = llmq::chainLocksHandler->HasChainLock(blockindex->nHeight, blockindex->GetBlockHash());
+
+    std::string type = "Proof-of-Work (RandomX)";
+    if (blockindex->IsRandomXProofOfWork()){
+        type = "Proof-of-work (RandomX)";
+    }
+    result.pushKV("proof_type", type);
+    if (blockindex->IsRandomXProofOfWork() && blockindex->nTime >= Params().PowUpdateTimestamp())
+        result.pushKV("randomxproofofworkhash", blockindex->GetRandomXPoWHash().GetHex());
+    else
+        result.pushKV("proofofworkhash", blockindex->GetRandomXPoWHash().GetHex());
+
     UniValue txs(UniValue::VARR);
     for(const auto& tx : block.vtx)
     {
@@ -180,6 +208,7 @@ UniValue blockToJSON(const CBlock& block, const CBlockIndex* tip, const CBlockIn
     return result;
 }
 
+
 static UniValue getblockcount(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() != 0)
@@ -198,6 +227,93 @@ static UniValue getblockcount(const JSONRPCRequest& request)
 
     LOCK(cs_main);
     return ::ChainActive().Height();
+}
+
+static UniValue getchainalgostats(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() > 2)
+        throw std::runtime_error(
+            "getchainalgostats ( blocks ) ( height )\n"
+            "\nReturns the blocks found by each algo over the [blocks] blocks leading up to [height].\n"
+            "\nArguments:\n"
+                "1.  blocks       (numeric, optional) How many blocks to count.  Default: 1440 \n"
+                "2.  height       (numeric, optional) The tip to begin at.  Default: current height \n"
+            "\nResult:\n"
+                "{ \n"
+                "  \"start\" :      (numeric) Epoch time from the first block in the series \n"
+                "  \"finish\" :     (numeric) Epoch time of the last block in the series \n"
+                "  \"period\" :     (numeric) Time, in minutes, the block series spanned \n"
+                "  \"startblock\" : (numeric) Block height of the first block in the series \n"
+                "  \"endblock\" :   (numeric) Block height of the last block in the series \n"
+                "  \"pos\" :        (numeric) The number of PoS blocks found in the series \n"
+                "  \"randomx\":     (numeric) The number of RandomX blocks found in the series \n"
+                "} \n"
+            "\nExamples:\n"
+            "\nGet stats from the latest 1440 blocks\n"
+            + HelpExampleCli("getchainalgostats", "")
+            + "\nGet stats for 1000 blocks up to block 3500\n"
+            + HelpExampleCli("getchainalgostats", "1000 3500")
+            + "\nAs a JSON RPC call\n"
+            + HelpExampleRpc("getchainalgostats", "count, height")
+        );
+
+    int nBlockCount = ALGO_RATIO_LOOK_BACK_BLOCK_COUNT;
+    if (nBlockCount > ::ChainActive().Height()) {
+        nBlockCount = ::ChainActive().Height();
+    }
+    if (request.params.size() > 0) {
+        nBlockCount = request.params[0].get_int();
+        if (nBlockCount <= 0 || nBlockCount > ::ChainActive().Height())
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Block count out of range");
+    }
+
+    int nHeight = ::ChainActive().Height();
+    if (request.params.size() > 1) {
+        nHeight = request.params[1].get_int();
+        if ((nHeight+1) < nBlockCount || nHeight > ::ChainActive().Height())
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Block height out of range");
+    }
+
+    int nRandomxCount  = 0;
+    int nPoSCount = 0;
+
+    CBlockIndex *pend = ::ChainActive()[nHeight];
+    if (!pend)
+        throw JSONRPCError(RPC_MISC_ERROR, "Chain reorged during execution.  Try again");
+
+    CBlockIndex *pindex = pend;
+
+    try {
+        // Rather than holding a lock the whole time in case they grind a
+        // long chain. just catch the exception and tell them no bueno.
+        while (pindex) {
+            nBlockCount--;
+            if (pindex->IsRandomXProofOfWork()) {
+                nRandomxCount++;
+            }
+            if(nBlockCount <= 0) {
+                break;
+            }
+            pindex=pindex->pprev;
+        }
+    } catch (std::exception &e) {
+        throw JSONRPCError(RPC_MISC_ERROR, "Chain reorged during execution.  Try again");
+    }
+
+    if (!pindex)
+        throw JSONRPCError(RPC_MISC_ERROR, "Check parameters");
+
+    UniValue obj(UniValue::VOBJ);
+
+    obj.pushKV("start", (uint64_t)pindex->nTime);
+    obj.pushKV("finish", (uint64_t)pend->nTime);
+    obj.pushKV("period", (uint64_t)(pend->nTime - pindex->nTime)/60);
+    obj.pushKV("startblock", (uint64_t)pindex->nHeight);
+    obj.pushKV("endblock", (uint64_t)pend->nHeight);
+    obj.pushKV("pos", nPoSCount);
+    obj.pushKV("randomx", nRandomxCount);
+
+    return obj;
 }
 
 static UniValue getbestblockhash(const JSONRPCRequest& request)
@@ -1473,6 +1589,8 @@ UniValue getblockchaininfo(const JSONRPCRequest& request)
             "  \"headers\" : xxxxxx,            (numeric) the current number of headers we have validated\n"
             "  \"bestblockhash\" : \"...\",       (string) the hash of the currently best block\n"
             "  \"difficulty\" : xxxxxx,         (numeric) the current difficulty\n"
+            "  \"difficulty_randomx\": xxxxxx,         (numeric) the current RandomX PoW difficulty\n"
+            "  \"difficulty_pos\": xxxxxx,         (numeric) the current PoS difficulty\n"
             "  \"mediantime\" : xxxxxx,         (numeric) median time for the current best block\n"
             "  \"verificationprogress\" : xxxx, (numeric) estimate of verification progress [0..1]\n"
             "  \"initialblockdownload\" : xxxx, (boolean) (debug information) estimate of whether this node is in Initial Block Download mode.\n"
@@ -1520,12 +1638,19 @@ UniValue getblockchaininfo(const JSONRPCRequest& request)
 
     std::string strChainName = gArgs.IsArgSet("-devnet") ? gArgs.GetDevNetName() : Params().NetworkIDString();
 
+    CBlockIndex* pindex = ::ChainActive().Tip();
+    const Consensus::Params& ConsensusParams = Params().GetConsensus();
+
     const CBlockIndex* tip = ::ChainActive().Tip();
+    double nDiffRandomX = -1;
+        nDiffRandomX = GetDifficulty(GetNextWorkRequired(pindex, nullptr, ConsensusParams, CBlock::RANDOMX_BLOCK));
+
     UniValue obj(UniValue::VOBJ);
     obj.pushKV("chain",                 strChainName);
     obj.pushKV("blocks",                (int)::ChainActive().Height());
     obj.pushKV("headers",               pindexBestHeader ? pindexBestHeader->nHeight : -1);
     obj.pushKV("bestblockhash",         tip->GetBlockHash().GetHex());
+    obj.pushKV("difficulty_randomx",    nDiffRandomX);
     obj.pushKV("difficulty",            (double)GetDifficulty(tip));
     obj.pushKV("mediantime",            (int64_t)tip->GetMedianTimePast());
     obj.pushKV("verificationprogress",  GuessVerificationProgress(Params().TxData(), tip));
@@ -2734,6 +2859,7 @@ static const CRPCCommand commands[] =
     { "blockchain",         "getblockhashes",         &getblockhashes,         {"high","low"} },
     { "blockchain",         "getblockhash",           &getblockhash,           {"height"} },
     { "blockchain",         "getblockheader",         &getblockheader,         {"blockhash","verbose"} },
+    { "blockchain",         "getchainalgostats",      &getchainalgostats,      {"blocks", "height"} },
     { "blockchain",         "getblockheaders",        &getblockheaders,        {"blockhash","count","verbose"} },
     { "blockchain",         "getmerkleblocks",        &getmerkleblocks,        {"filter","blockhash","count"} },
     { "blockchain",         "getchaintips",           &getchaintips,           {"count","branchlen"} },

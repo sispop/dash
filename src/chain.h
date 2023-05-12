@@ -15,6 +15,8 @@
 
 #include <vector>
 
+extern int global_randomx_flags;
+
 /**
  * Maximum amount of time that a block timestamp is allowed to exceed the
  * current network-adjusted time before the block will be accepted.
@@ -233,6 +235,11 @@ public:
         return *phashBlock;
     }
 
+            int nPowType = (nVersion &
+                            (CBlockHeader::RANDOMX_BLOCK));
+
+    uint256 GetRandomXPoWHash() const;
+
     /**
      * Check whether this block's and all previous blocks' transactions have been
      * downloaded (and stored to disk) at some point.
@@ -266,6 +273,16 @@ public:
 
         std::sort(pbegin, pend);
         return pbegin[(pend - pbegin)/2];
+    }
+
+    std::string GetType() const {
+        if (IsRandomXProofOfWork()) return "RandomX";
+        return "Unknown";
+    }
+
+    bool IsRandomXProofOfWork() const
+    {
+        return (nVersion & CBlockHeader::RANDOMX_BLOCK) && nTime >= nPowTimeStampActive;
     }
 
     std::string ToString() const
@@ -433,5 +450,7 @@ public:
     /** Find the earliest block with timestamp equal or greater than the given time and height equal or greater than the given height. */
     CBlockIndex* FindEarliestAtLeast(int64_t nTime, int height) const;
 };
+
+uint256 GetRandomXBlockHash(const int32_t& height, const uint256& hash_blob);
 
 #endif // BITCOIN_CHAIN_H

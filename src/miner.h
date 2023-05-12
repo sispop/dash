@@ -22,9 +22,46 @@ class CChainParams;
 class CConnman;
 class CScript;
 
+// Used for determining which PoW mining algorithm to use
+extern const char * RANDOMX_STRING;
+
+extern int nMiningAlgorithm;
+
+enum {
+    MINE_RANDOMX = 0
+};
+
+static std::string GetMiningType(int nPoWType, bool block=true) {
+    if (block) {
+        if (nPoWType & CBlockHeader::RANDOMX_BLOCK) return "RandomX";
+    } else {
+        if (MINE_RANDOMX == nPoWType) return RANDOMX_STRING;
+    }
+    return "Unknown";
+}
+
+double GetHashSpeed();
+void ClearHashSpeed();
+double GetRecentHashSpeed();
+int GetMiningAlgorithm();
+bool SetMiningAlgorithm(const std::string& algo, bool fSet = true);
+
+
 namespace Consensus { struct Params; };
 
 static const bool DEFAULT_PRINTPRIORITY = false;
+
+// This is used for both the nonce separation and the loop count, so
+// make it a constant used by both to maintain their synchronization
+static const uint32_t RANDOMX_INNER_LOOP_COUNT = 100000;
+
+enum TemplateFlags
+{
+    TF_FAIL = 0,
+    TF_SUCCESS = (1 << 0),
+    TF_STAILTIP = (1 << 1),
+    TF_MEMPOOLFAIL = (1 << 2),
+};
 
 struct CBlockTemplate
 {
@@ -34,6 +71,7 @@ struct CBlockTemplate
     uint32_t nPrevBits; // nBits of previous block (for subsidy calculation)
     std::vector<CTxOut> voutMasternodePayments; // masternode payment
     std::vector<CTxOut> voutSuperblockPayments; // superblock payment
+    uint8_t nFlags;
 };
 
 // Container for tracking updates to ancestor feerate as we include (parent)
@@ -159,7 +197,7 @@ public:
     BlockAssembler(const CChainParams& params, const Options& options);
 
     /** Construct a new block template with coinbase to scriptPubKeyIn */
-    std::unique_ptr<CBlockTemplate> CreateNewBlock(const CScript& scriptPubKeyIn);
+    std::unique_ptr<CBlockTemplate> CreateNewBlock(const CScript& scriptPubKeyIn, int nPoWType = 0);
 
     static Optional<int64_t> m_last_block_num_txs;
     static Optional<int64_t> m_last_block_size;
@@ -201,5 +239,12 @@ private:
 /** Modify the extranonce in a block */
 void IncrementExtraNonce(CBlock* pblock, const CBlockIndex* pindexPrev, unsigned int& nExtraNonce);
 int64_t UpdateTime(CBlockHeader* pblock, const Consensus::Params& consensusParams, const CBlockIndex* pindexPrev);
+
+void GenerateBitcoins(bool fGenerate, int nThreads, std::shared_ptr<CReserveScript> coinbaseScript);
+void LinkPoWThreadGroup(void* pthreadgroup);
+void LinkRandomXThreadGroup(void* pthreadgroup);
+void ThreadRandomXBitcoinMiner(std::shared_ptr<CReserveScript> coinbaseScript, const int vm_index, const uint32_t startNonce);
+bool GenerateActive();
+void setGenerate(bool fGenerate);
 
 #endif // BITCOIN_MINER_H
